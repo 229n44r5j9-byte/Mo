@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Nebula Breaker: Ultra Pro</title>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;900&display=swap" rel="stylesheet">
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; font-family: 'Orbitron', sans-serif; color: white; }
+        canvas { display: block; touch-action: none; }
+        
+        /* القوائم المشتركة */
+        .overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            display: flex; flex-direction: column; justify-content: center;
+            align-items: center; background: radial-gradient(circle, #050515 0%, #000 100%);
+            z-index: 10; transition: 0.5s; text-align: center;
+        }
+        .hidden { opacity: 0; pointer-events: none; visibility: hidden; }
+
+        h1 { color: #0ff; text-shadow: 0 0 20px #0ff; font-size: 2.5rem; margin-bottom: 20px; }
+        h2 { color: #ff0055; text-shadow: 0 0 15px #ff0055; font-size: 3rem; margin: 0; }
+        p { letter-spacing: 2px; margin-bottom: 10px; }
+
+        .store {
+            display: flex; gap: 15px; margin: 20px 0; background: rgba(255,255,255,0.05);
+            padding: 15px; border-radius: 20px; border: 1px solid #333;
+        }
+        .skin-option {
+            width: 50px; height: 50px; border-radius: 50%; cursor: pointer;
+            border: 3px solid transparent; transition: 0.3s;
+        }
+        .skin-option.active { border-color: #fff; transform: scale(1.2); box-shadow: 0 0 20px #fff; }
+        .fire { background: radial-gradient(#fff, #ff4d00); }
+        .ice { background: radial-gradient(#fff, #00d4ff); }
+        .gas { background: radial-gradient(#fff, #00ff88); }
+
+        button {
+            padding: 15px 40px; font-size: 1.2rem; background: #0ff;
+            border: none; color: #000; cursor: pointer; border-radius: 50px;
+            font-weight: 900; font-family: 'Orbitron'; box-shadow: 0 0 20px #0ff;
+            transition: 0.3s; margin-top: 20px;
+        }
+        button:hover { transform: scale(1.1); box-shadow: 0 0 30px #0ff; }
+        
+        #hud {
+            position: absolute; top: 20px; width: 100%; display: flex;
+            justify-content: space-around; pointer-events: none; z-index: 5;
+            text-shadow: 0 0 10px #0ff; opacity: 0; transition: 0.5s;
+        }
+        #hud.visible { opacity: 1; }
+    </style>
+</head>
+<body>
+
+    <div id="hud">
+        <div>SCORE: <span id="score">0</span></div>
+        <div>LEVEL: <span id="level">1</span></div>
+    </div>
+
+    <!-- شاشة البداية -->
+    <div id="start-menu" class="overlay">
+        <h1>NEBULA BREAKER</h1>
+        <p>SELECT ELEMENT</p>
+        <div class="store">
+            <div class="skin-option fire active" onclick="setSkin('fire', this)"></div>
+            <div class="skin-option ice" onclick="setSkin('ice', this)"></div>
+            <div class="skin-option gas" onclick="setSkin('gas', this)"></div>
+        </div>
+        <button onclick="startGame()">START MISSION</button>
+    </div>
+
+    <!-- شاشة الخسارة -->
+    <div id="game-over" class="overlay hidden">
+        <h2>GAME OVER</h2>
+        <p style="margin-top:20px;">FINAL SCORE: <span id="final-score">0</span></p>
+        <p>LEVEL REACHED: <span id="final-level">1</span></p>
+        <button onclick="startGame()" style="background:#ff0055; color:white; box-shadow:0 0 20px #ff0055;">TRY AGAIN</button>
+        <button onclick="backToMenu()" style="background:transparent; border:2px solid #0ff; color:#0ff; margin-left:10px;">MENU</button>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+<script>
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+    const scoreEl = document.getElementById("score");
+    const levelEl = document.getElementById("level");
+    
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    let gameActive = false;
+    let score = 0;
+    let level = 1;
+    let particles = [];
+    let ballParticles = [];
+    let bricks = [];
+
+    const skins = {
+        fire: { color: "#ff4d00", trail: "#ff2200" },
+        ice: { color: "#00d4ff", trail: "#0055ff" },
+        gas: { color: "#00ff88", trail: "#00aa44" }
+    };
+    let currentSkin = skins.fire;
+
+    function setSkin(type, el) {
+        currentSkin = skins[type];
+        document.querySelectorAll('.skin-option').forEach(opt => opt.classList.remove('active'));
+        el.classList.add('active');
+    }
+
+    const ball = { x: 0, y: 0, radius: 8, dx: 6, dy: -6, speed: 7 };
+    const paddle = { width: 140, height: 15, x: 0, targetX: 0 };
+
+    function generateLevel() {
+        bricks = [];
+        const cols = Math.floor(canvas.width / 80);
+        const rows = 4 + Math.min(level, 4); 
+        const padding = 12;
+        const bW = (canvas.width - (padding * (cols + 1))) / cols;
+
+        for(let c=0; c<cols; c++) {
+            bricks[c] = [];
+            for(let r=0; r<rows; r++) {
+                let status = Math.random() > (0.1 * level) ? 1 : 0; 
+                if (level === 1) status = 1; 
+                bricks[c][r] = { 
+                    x: c * (bW + padding) + padding, 
+                    y: r * (25 + padding) + 100, 
+                    w: bW, 
+                    status: status, 
+                    color: `hsl(${r * 40 + (level * 20)}, 80%, 50%)` 
+                };
+            }
+        }
+    }
+
+    function startGame() {
+        // إخفاء القوائم
+        document.getElementById("start-menu").classList.add("hidden");
+        document.getElementById("game-over").classList.add("hidden");
+        document.getElementById("hud").classList.add("visible");
+        
+        // تصفير اللعبة
+        score = 0; level = 1;
+        scoreEl.innerText = score;
+        levelEl.innerText = level;
+        ball.speed = 7;
+        resetBall();
+        generateLevel();
+        gameActive = true;
+    }
+
+    function backToMenu() {
+        document.getElementById("game-over").classList.add("hidden");
+        document.getElementById("start-menu").classList.remove("hidden");
+        document.getElementById("hud").classList.remove("visible");
+    }
+
+    function resetBall() {
+        ball.x = canvas.width / 2;
+        ball.y = canvas.height - 100;
+        ball.dx = ball.speed * (Math.random() > 0.5 ? 1 : -1);
+        ball.dy = -ball.speed;
+        paddle.x = canvas.width / 2 - paddle.width / 2;
+        paddle.targetX = paddle.x;
+    }
+
+    function gameOver() {
+        gameActive = false;
+        document.getElementById("final-score").innerText = score;
+        document.getElementById("final-level").innerText = level;
+        document.getElementById("game-over").classList.remove("hidden");
+    }
+
+    class Particle {
+        constructor(x, y, color, size, vx, vy) {
+            this.x = x; this.y = y; this.color = color;
+            this.size = size; this.vx = vx; this.vy = vy; this.life = 1.0;
+        }
+        update() { this.x += this.vx; this.y += this.vy; this.life -= 0.02; }
+        draw() {
+            ctx.globalAlpha = this.life;
+            ctx.shadowBlur = 10; ctx.shadowColor = this.color;
+            ctx.fillStyle = this.color;
+            ctx.beginPath(); ctx.arc(this.x, this.y, this.size, 0, Math.PI*2); ctx.fill();
+            ctx.globalAlpha = 1;
+        }
+    }
+
+    function update() {
+        ctx.fillStyle = "rgba(0, 0, 0, 0.25)";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        if(gameActive) {
+            paddle.x += (paddle.targetX - paddle.x) * 0.15;
+            ctx.shadowBlur = 15; ctx.shadowColor = "#0ff";
+            ctx.fillStyle = "#0ff";
+            ctx.beginPath(); ctx.roundRect(paddle.x, canvas.height - 50, paddle.width, paddle.height, 10); ctx.fill();
+
+            let activeBricks = 0;
+            bricks.forEach(col => {
+                col.forEach(b => {
+                    if(b.status) {
+                        activeBricks++;
+                        ctx.shadowBlur = 8; ctx.shadowColor = b.color;
+                        ctx.fillStyle = b.color;
+                        ctx.fillRect(b.x, b.y, b.w, 25);
+                        
+                        if(ball.x > b.x && ball.x < b.x + b.w && ball.y > b.y && ball.y < b.y + 25) {
+                            ball.dy *= -1; b.status = 0; score += 20;
+                            scoreEl.innerText = score;
+                            for(let i=0; i<10; i++) particles.push(new Particle(ball.x, ball.y, b.color, 3, (Math.random()-0.5)*10, (Math.random()-0.5)*10));
+                        }
+                    }
+                });
+            });
+
+            if(activeBricks === 0) {
+                level++; levelEl.innerText = level;
+                ball.speed += 0.5;
+                resetBall();
+                generateLevel();
+            }
+
+            ballParticles.push(new Particle(ball.x, ball.y, currentSkin.trail, Math.random()*6, (Math.random()-0.5)*2, (Math.random()-0.5)*2));
+            if(ballParticles.length > 20) ballParticles.shift();
+            ballParticles.forEach(p => { p.update(); p.draw(); });
+
+            ctx.shadowBlur = 20; ctx.shadowColor = currentSkin.color;
+            ctx.fillStyle = "#fff";
+            ctx.beginPath(); ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI*2); ctx.fill();
+
+            ball.x += ball.dx; ball.y += ball.dy;
+            if(ball.x < 0 || ball.x > canvas.width) ball.dx *= -1;
+            if(ball.y < 0) ball.dy *= -1;
+            if(ball.y > canvas.height - 50 && ball.x > paddle.x && ball.x < paddle.x + paddle.width) {
+                ball.dy = -ball.speed;
+                ball.dx = (ball.x - (paddle.x + paddle.width/2)) * 0.35;
+            } else if(ball.y > canvas.height) {
+                gameOver();
+            }
+
+            particles.forEach((p, i) => { p.update(); p.draw(); if(p.life <= 0) particles.splice(i, 1); });
+        }
+        requestAnimationFrame(update);
+    }
+
+
+    window.addEventListener('mousemove', e => paddle.targetX = e.clientX - paddle.width/2);
+    window.addEventListener('touchmove', e => { paddle.targetX = e.touches[0].clientX - paddle.width/2; e.preventDefault(); }, {passive:false});
+
+    update();
+</script>
+</body>
+</html>
